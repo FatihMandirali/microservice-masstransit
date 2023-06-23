@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Order.API.DTOs;
 using Order.API.Models;
 using Shared;
+using Shared.Events;
 
 namespace Order.API.Controllers;
 [Route("api/[controller]")]
@@ -10,12 +11,12 @@ namespace Order.API.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly IPublishEndpoint _publishEndpoint;
+    private readonly ISendEndpointProvider _sendEndpointProvider;
 
-    public OrdersController(AppDbContext context, IPublishEndpoint publishEndpoint)
+    public OrdersController(AppDbContext context, ISendEndpointProvider sendEndpointProvider)
     {
         _context = context;
-        _publishEndpoint = publishEndpoint;
+        _sendEndpointProvider = sendEndpointProvider;
     }
 
 
@@ -49,7 +50,7 @@ public class OrdersController : ControllerBase
         await _context.AddAsync(newOrder);
         await _context.SaveChangesAsync();
 
-        var orderCreatedEvent = new OrderCreatedEvent
+        var orderCreatedEvent = new OrderCreatedRequestEvent()
         {
             BuyerId = orderCreateDto.BuyerId,
             OrderId = newOrder.Id,
@@ -65,15 +66,15 @@ public class OrdersController : ControllerBase
         
         orderCreateDto.OrderItem.ForEach(item =>
         {
-            orderCreatedEvent.OrderItem.Add(new OrderItemMessage
+            orderCreatedEvent.OrderItems.Add(new OrderItemMessage
             {
                 Count = item.Count,
                 ProductId = item.ProductId,
                 
             });
         });
-
-        await _publishEndpoint.Publish(orderCreatedEvent); 
+        var endpoint = await _sendEndpointProvider.GetSendEndpoint(new Uri($"queue:{RabbitMqSettingsConst.OrderSaga}"));
+        await endpoint.Send<OrderCreatedRequestEvent>(orderCreatedEvent); 
         //Publish ile gönderirsek exchange'ye gider yani birinin subscribe olması gerekir subscribe olan birden fazla servis burdaki eventi alabilir,
         //Send ile gönderirsek kuyruk ismi belirtmemiz gerekir ve bir tane servis dinlerken kullanılır
         
